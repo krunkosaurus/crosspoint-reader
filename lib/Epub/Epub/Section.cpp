@@ -104,11 +104,22 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
 
   serialization::readPod(file, pageCount);
 
+  // Sanity check: same upper bound used by TextBlock::deserialize for word count
+  if (pageCount > 10000) {
+    LOG_ERR("SCT", "Deserialization failed: page count %u exceeds maximum", pageCount);
+    clearCache();
+    return false;
+  }
+
   // Load LUT into memory (file is now positioned at the lutOffset field)
   uint32_t lutOffset;
   serialization::readPod(file, lutOffset);
   lut.resize(pageCount);
-  file.seek(lutOffset);
+  if (!file.seek(lutOffset)) {
+    LOG_ERR("SCT", "Deserialization failed: seek to LUT offset %u failed", lutOffset);
+    clearCache();
+    return false;
+  }
   for (uint32_t& pos : lut) {
     serialization::readPod(file, pos);
   }
@@ -120,6 +131,10 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
 
 bool Section::clearCache() {
   file.close();  // Must be closed before removal on FAT32
+  lut.clear();
+  pageCount = 0;
+  currentPage = 0;
+
   if (!Storage.exists(filePath.c_str())) {
     LOG_DBG("SCT", "Cache does not exist, no action needed");
     return true;
@@ -254,7 +269,10 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   // Cache the LUT in memory and open the file for reading so that
   // subsequent loadPageFromSectionFile() calls can seek directly without re-opening.
   this->lut = std::move(lut);
-  Storage.openFileForRead("SCT", filePath, file);
+  if (!Storage.openFileForRead("SCT", filePath, file)) {
+    LOG_ERR("SCT", "Failed to open section file for reading after creation");
+    return false;
+  }
   return true;
 }
 
@@ -273,7 +291,10 @@ std::unique_ptr<Page> Section::loadPageFromSectionFile() {
     }
   }
 
-  file.seek(lut[currentPage]);
+  if (!file.seek(lut[currentPage])) {
+    LOG_ERR("SCT", "loadPageFromSectionFile: seek to page %d offset %u failed", currentPage, lut[currentPage]);
+    return nullptr;
+  }
   return Page::deserialize(file);
   // File is intentionally NOT closed; stays open for the next page load
 }
