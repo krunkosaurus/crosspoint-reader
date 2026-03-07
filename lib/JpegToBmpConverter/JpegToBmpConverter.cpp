@@ -286,15 +286,26 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   uint32_t* rowAccum = nullptr;  // Accumulator for each output X (32-bit for larger sums)
   uint32_t* rowCount = nullptr;  // Count of source pixels accumulated per output X
 
-  auto cleanupResources = [&]() {
-    delete[] rowAccum;
-    delete[] rowCount;
-    delete atkinsonDitherer;
-    delete fsDitherer;
-    delete atkinson1BitDitherer;
-    free(mcuRowBuffer);
-    free(rowBuffer);
-  };
+  // RAII guard: frees all heap resources on any return path, including early exits.
+  // Holds references so it always sees the latest pointer values assigned below.
+  struct Cleanup {
+    uint8_t*& rowBuffer;
+    uint8_t*& mcuRowBuffer;
+    AtkinsonDitherer*& atkinsonDitherer;
+    FloydSteinbergDitherer*& fsDitherer;
+    Atkinson1BitDitherer*& atkinson1BitDitherer;
+    uint32_t*& rowAccum;
+    uint32_t*& rowCount;
+    ~Cleanup() {
+      delete[] rowAccum;
+      delete[] rowCount;
+      delete atkinsonDitherer;
+      delete fsDitherer;
+      delete atkinson1BitDitherer;
+      free(mcuRowBuffer);
+      free(rowBuffer);
+    }
+  } cleanup{rowBuffer, mcuRowBuffer, atkinsonDitherer, fsDitherer, atkinson1BitDitherer, rowAccum, rowCount};
 
   // Allocate row buffer
   rowBuffer = static_cast<uint8_t*>(malloc(bytesPerRow));
@@ -311,14 +322,12 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   // Validate MCU row buffer size before allocation
   if (mcuRowPixels > MAX_MCU_ROW_BYTES) {
     LOG_DBG("JPG", "MCU row buffer too large (%d bytes), max: %d", mcuRowPixels, MAX_MCU_ROW_BYTES);
-    cleanupResources();
     return false;
   }
 
   mcuRowBuffer = static_cast<uint8_t*>(malloc(mcuRowPixels));
   if (!mcuRowBuffer) {
     LOG_ERR("JPG", "Failed to allocate MCU row buffer (%d bytes)", mcuRowPixels);
-    cleanupResources();
     return false;
   }
 
@@ -363,7 +372,6 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
         } else {
           LOG_ERR("JPG", "JPEG decode MCU failed at (%d, %d) with error code: %d", mcuX, mcuY, mcuStatus);
         }
-        cleanupResources();
         return false;
       }
 
@@ -544,8 +552,6 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
       }
     }
   }
-
-  cleanupResources();
 
   LOG_DBG("JPG", "Successfully converted JPEG to BMP");
   return true;
