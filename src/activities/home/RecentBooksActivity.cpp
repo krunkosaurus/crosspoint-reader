@@ -103,7 +103,7 @@ void RecentBooksActivity::render(RenderLock&&) {
         [this](int index) { return recentBooks[index].title; },
         [this](int index) {
           const auto& book = recentBooks[index];
-          if (!book.author.empty() && !book.series.empty()) return book.author + " \u2022 " + book.series;
+          if (!book.author.empty() && !book.series.empty()) return book.author + "\n" + book.series;
           if (!book.series.empty()) return book.series;
           return book.author;
         },
