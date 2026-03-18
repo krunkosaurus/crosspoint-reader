@@ -123,7 +123,7 @@ void appendApostropheContractionBreaks(const std::vector<CodepointInfo>& cps,
           }
         }
 
-        // Avoid stranding short clitics like "l'"/"d'" or tiny suffixes like "'t"/"'re"/"'ve"/"'ll".
+        // Avoid stranding short clitics like "l'"/"d'" or contraction tails like "'ve"/"'re"/"'ll".
         if (leftPrefixLen >= kMinLeftSegmentLen && rightSuffixLen >= kMinRightSegmentLen) {
           outBreaks.push_back({cps[i + 1].byteOffset, false});
         }
