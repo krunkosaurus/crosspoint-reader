@@ -266,7 +266,7 @@ def report_unused_keys(
     used_keys: Set[str],
 ) -> List[str]:
     """Return a sorted list of keys from *string_keys* absent in *used_keys*."""
-    return [k for k in string_keys if k not in used_keys]
+    return [k for k in sorted(string_keys) if k not in used_keys]
 
 
 # ---------------------------------------------------------------------------
@@ -845,6 +845,17 @@ def main(
         else:
             used_keys = set(string_keys)
             unused_set = set()
+
+        # --- Missing-string detection (used in code but absent from English) ---
+        missing_keys = sorted(used_keys - set(string_keys))
+        if missing_keys:
+            print(
+                f"\n  CRITICAL: {len(missing_keys)} string(s) used in source but missing from english.yaml:"
+            )
+            for key in missing_keys:
+                print(f"    - {key}")
+            print()
+            sys.exit(1)
 
         # Compute per-language data blob sizes:
         # sum of UTF-8 byte length + 1 (null terminator) per string
