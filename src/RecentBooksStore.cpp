@@ -22,7 +22,6 @@ RecentBooksStore RecentBooksStore::instance;
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& series, const std::string& coverBmpPath) {
-                               const std::string& coverBmpPath) {
   int8_t embeddedStyleOverride = -1;
   int8_t imageRenderingOverride = -1;
 
@@ -36,9 +35,8 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   }
 
   // Add to front
-  recentBooks.insert(recentBooks.begin(), {path, title, author, series, coverBmpPath});
   recentBooks.insert(recentBooks.begin(),
-                     {path, title, author, coverBmpPath, embeddedStyleOverride, imageRenderingOverride});
+                     {path, title, author, series, coverBmpPath, embeddedStyleOverride, imageRenderingOverride});
 
   // Trim to max size
   if (recentBooks.size() > MAX_RECENT_BOOKS) {
