@@ -2,6 +2,8 @@
 
 #include <ArduinoJson.h>
 #include <Logging.h>
+#include <algorithm>
+#include <cctype>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 
@@ -110,22 +112,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::registerUser() {
   }
 
   std::string url = KOREADER_STORE.getBaseUrl() + "/users/create";
-  LOG_DBG("KOSync", "Registering user: %s", url.c_str());
-
-  HTTPClient http;
-  std::unique_ptr<WiFiClientSecure> secureClient;
-  WiFiClient plainClient;
-
-  if (isHttpsUrl(url)) {
-    secureClient.reset(new WiFiClientSecure);
-    secureClient->setInsecure();
-    http.begin(*secureClient, url.c_str());
-  } else {
-    http.begin(plainClient, url.c_str());
-  }
-
-  http.addHeader("Accept", "application/vnd.koreader.v1+json");
-  http.addHeader("Content-Type", "application/json");
+  LOG_DBG("KOSync", "Registering user: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
 
   JsonDocument doc;
   doc["username"] = KOREADER_STORE.getUsername();
@@ -135,11 +122,24 @@ KOReaderSyncClient::Error KOReaderSyncClient::registerUser() {
 
   LOG_DBG("KOSync", "Register request body: <redacted credentials>");
 
-  const int httpCode = http.POST(body.c_str());
-  const String responseBody = http.getString();
-  http.end();
+  ResponseBuffer buf;
+  esp_http_client_handle_t client = createClient(url.c_str(), &buf, HTTP_METHOD_POST);
+  if (!client) return NETWORK_ERROR;
 
-  LOG_DBG("KOSync", "Register response: %d | body: %s", httpCode, responseBody.c_str());
+  esp_http_client_set_header(client, "Content-Type", "application/json");
+  esp_http_client_set_post_field(client, body.c_str(), body.length());
+
+  esp_err_t err = esp_http_client_perform(client);
+  const int httpCode = esp_http_client_get_status_code(client);
+  lastHttpCode = httpCode;
+  esp_http_client_cleanup(client);
+
+  LOG_DBG("KOSync", "Register response: %d (err: %d) | body: %s", httpCode, err,
+          buf.data ? buf.data : "");
+
+  if (err != ESP_OK) {
+    return NETWORK_ERROR;
+  }
 
   if (httpCode == 201) {
     return OK;
@@ -149,17 +149,16 @@ KOReaderSyncClient::Error KOReaderSyncClient::registerUser() {
   } else if (httpCode == 402) {
     // Both "user already exists" (error 2002) and "registration disabled" (error 2005)
     // return HTTP 402 on the original kosync server. Distinguish them by body text.
-    String lowerBody = responseBody;
-    lowerBody.toLowerCase();
-    if (lowerBody.indexOf("already") >= 0) {
+    std::string lowerBody = buf.data ? buf.data : "";
+    std::transform(lowerBody.begin(), lowerBody.end(), lowerBody.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lowerBody.find("already") != std::string::npos) {
       return USER_EXISTS;
     }
     return REGISTRATION_DISABLED;
   } else if (httpCode == 409) {
     // korrosync returns 409 for existing users
     return USER_EXISTS;
-  } else if (httpCode < 0) {
-    return NETWORK_ERROR;
   }
   return SERVER_ERROR;
 }
