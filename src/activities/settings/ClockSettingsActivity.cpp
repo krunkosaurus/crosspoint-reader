@@ -17,10 +17,10 @@ const StrId menuNames[MENU_ITEMS] = {StrId::STR_USE_CLOCK, StrId::STR_CLOCK_FORM
                                      StrId::STR_SYNC_TIME, StrId::STR_DETECT_TIMEZONE};
 
 const StrId timeZoneNames[CrossPointSettings::TIMEZONE_COUNT] = {
-    StrId::STR_TZ_UTC,        StrId::STR_TZ_CET,      StrId::STR_TZ_EET,      StrId::STR_TZ_MSK,
-    StrId::STR_TZ_UTC_PLUS4,  StrId::STR_TZ_IST,      StrId::STR_TZ_UTC_PLUS7, StrId::STR_TZ_UTC_PLUS8,
-    StrId::STR_TZ_UTC_PLUS9,  StrId::STR_TZ_AEST,     StrId::STR_TZ_NZST,     StrId::STR_TZ_UTC_MINUS3,
-    StrId::STR_TZ_EST,        StrId::STR_TZ_CST,      StrId::STR_TZ_MST,      StrId::STR_TZ_PST};
+    StrId::STR_TZ_UTC,       StrId::STR_TZ_CET,  StrId::STR_TZ_EET,       StrId::STR_TZ_MSK,
+    StrId::STR_TZ_UTC_PLUS4, StrId::STR_TZ_IST,  StrId::STR_TZ_UTC_PLUS7, StrId::STR_TZ_UTC_PLUS8,
+    StrId::STR_TZ_UTC_PLUS9, StrId::STR_TZ_AEST, StrId::STR_TZ_NZST,      StrId::STR_TZ_UTC_MINUS3,
+    StrId::STR_TZ_EST,       StrId::STR_TZ_CST,  StrId::STR_TZ_MST,       StrId::STR_TZ_PST};
 }  // namespace
 
 void ClockSettingsActivity::onEnter() {
