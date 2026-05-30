@@ -884,7 +884,16 @@ void GfxRenderer::drawImage(const uint8_t bitmap[], const int x, const int y, co
 }
 
 void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, const int width, const int height) const {
-  display.drawImageTransparent(bitmap, y, getScreenWidth() - width - x, height, width);
+  const int widthBytes = (width + 7) / 8;
+  for (int row = 0; row < height; ++row) {
+    for (int col = 0; col < width; ++col) {
+      const uint8_t byte = pgm_read_byte(&bitmap[row * widthBytes + (col >> 3)]);
+      const bool transparent = (byte >> (7 - (col & 7))) & 0x01;
+      if (!transparent) {
+        drawPixel(x + col, y + row, true);
+      }
+    }
+  }
 }
 
 void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,

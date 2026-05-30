@@ -533,13 +533,9 @@ bool handlePaperColorSideButtonInvertChord() {
   }
 
   chordArmed = false;
-  {
-    RenderLock lock;
-    const bool inverted = renderer.toggleOutputInverted();
-    renderer.invertScreen();
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    LOG_DBG("MAIN", "PaperColor side-button display inversion: %s", inverted ? "on" : "off");
-  }
+  const bool inverted = renderer.toggleOutputInverted();
+  LOG_DBG("MAIN", "PaperColor side-button display inversion: %s", inverted ? "on" : "off");
+  activityManager.requestUpdate(true);
   return true;
 }
 

@@ -150,11 +150,15 @@ bool HomeActivity::storeCoverBuffer() {
     coverBufferSize = 0;
     return false;
   }
+  coverBufferGeneration = renderer.getOutputStateGeneration();
   return true;
 }
 
 bool HomeActivity::restoreCoverBuffer() {
   if (!coverBuffer || coverRectW <= 0 || coverRectH <= 0) return false;
+  if (coverBufferGeneration != renderer.getOutputStateGeneration()) {
+    return false;
+  }
   return renderer.copyBufferToRegion(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize);
 }
 
@@ -164,6 +168,7 @@ void HomeActivity::freeCoverBuffer() {
     coverBuffer = nullptr;
   }
   coverBufferSize = 0;
+  coverBufferGeneration = 0;
   coverBufferStored = false;
 }
 
@@ -215,6 +220,10 @@ void HomeActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
   bool bufferRestored = coverBufferStored && restoreCoverBuffer();
+  if (coverBufferStored && !bufferRestored) {
+    coverRendered = false;
+    freeCoverBuffer();
+  }
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
                  metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
@@ -260,7 +269,8 @@ void HomeActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  renderer.displayBuffer();
+  renderer.displayBuffer(BoardConfig::isM5StackPaperColor() && !firstRenderDone ? HalDisplay::FULL_REFRESH
+                                                                                : HalDisplay::FAST_REFRESH);
 
   if (!firstRenderDone) {
     firstRenderDone = true;

@@ -45,6 +45,7 @@ class GfxRenderer {
   Orientation orientation;
   bool fadingFix;
   bool outputInverted = false;
+  uint32_t outputStateGeneration = 0;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -124,10 +125,17 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
-  void setOutputInverted(const bool enabled) { outputInverted = enabled; }
+  void setOutputInverted(const bool enabled) {
+    if (outputInverted != enabled) {
+      outputInverted = enabled;
+      outputStateGeneration++;
+    }
+  }
   bool isOutputInverted() const { return outputInverted; }
+  uint32_t getOutputStateGeneration() const { return outputStateGeneration; }
   bool toggleOutputInverted() {
     outputInverted = !outputInverted;
+    outputStateGeneration++;
     return outputInverted;
   }
 
