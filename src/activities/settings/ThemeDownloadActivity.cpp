@@ -44,6 +44,7 @@ void ThemeDownloadActivity::onWifiSelectionComplete(const bool success) {
   {
     RenderLock lock(*this);
     state_ = LOADING_MANIFEST;
+    downloadingThemeIndex_ = -1;
   }
   requestUpdateAndWait();
 
@@ -432,6 +433,23 @@ void ThemeDownloadActivity::loop() {
       if (downloadingThemeIndex_ >= 0 && downloadingThemeIndex_ < static_cast<int>(themes_.size())) {
         downloadTheme(themes_[downloadingThemeIndex_]);
         requestUpdateAndWait();
+      } else {
+        {
+          RenderLock lock(*this);
+          state_ = LOADING_MANIFEST;
+          errorMessage_.clear();
+        }
+        requestUpdateAndWait();
+
+        if (!fetchAndParseManifest()) {
+          RenderLock lock(*this);
+          state_ = ERROR;
+        } else {
+          RenderLock lock(*this);
+          state_ = THEME_LIST;
+          selectedIndex_ = 0;
+        }
+        requestUpdate();
       }
     }
   }
