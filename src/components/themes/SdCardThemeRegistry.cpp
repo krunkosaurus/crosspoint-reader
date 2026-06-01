@@ -111,7 +111,7 @@ void parseTitleSpec(JsonObjectConst obj, ThemeTitleSpec& title) {
   if (obj.isNull()) return;
   title.enabled = obj["enabled"] | true;
   title.fontId = obj["fontId"] | title.fontId;
-  const char* font = obj["font"] | nullptr;
+  const char* font = obj["font"].as<const char*>();
   if (font != nullptr) {
     if (strcmp(font, "ui10") == 0) {
       title.fontId = UI_10_FONT_ID;
@@ -129,7 +129,7 @@ void parseTitleSpec(JsonObjectConst obj, ThemeTitleSpec& title) {
   title.maxLines = obj["maxLines"] | title.maxLines;
   title.offsetY = obj["offsetY"] | title.offsetY;
 
-  const char* style = obj["style"] | nullptr;
+  const char* style = obj["style"].as<const char*>();
   if (style != nullptr) {
     title.bold = strcmp(style, "bold") == 0;
   }
@@ -137,10 +137,10 @@ void parseTitleSpec(JsonObjectConst obj, ThemeTitleSpec& title) {
 
 void parseCoverSlot(JsonObjectConst obj, ThemeCoverSlotSpec& slot) {
   if (obj.isNull()) return;
-  slot.book = parseBookRef(obj["book"] | nullptr);
+  slot.book = parseBookRef(obj["book"].as<const char*>());
   slot.bookIndex = obj["bookIndex"] | slot.bookIndex;
-  slot.x = parseSlotX(obj["x"] | nullptr);
-  slot.y = parseSlotY(obj["y"] | nullptr);
+  slot.x = parseSlotX(obj["x"].as<const char*>());
+  slot.y = parseSlotY(obj["y"].as<const char*>());
   slot.height = obj["height"] | slot.height;
   slot.widthPercent = obj["widthPercent"] | slot.widthPercent;
   slot.xOffset = obj["xOffset"] | slot.xOffset;
@@ -151,7 +151,7 @@ void parseCoverSlot(JsonObjectConst obj, ThemeCoverSlotSpec& slot) {
 
 void parseHomeRecentsSpec(JsonObjectConst obj, ThemeHomeRecentsSpec& spec) {
   if (obj.isNull()) return;
-  const char* type = obj["type"] | nullptr;
+  const char* type = obj["type"].as<const char*>();
   if (type != nullptr) {
     if (strcmp(type, "cover-strip") == 0) {
       spec.type = ThemeHomeRecentsType::CoverStrip;
@@ -180,7 +180,7 @@ void parseHomeRecentsSpec(JsonObjectConst obj, ThemeHomeRecentsSpec& spec) {
 }
 
 void applyFontSpec(JsonObjectConst obj, int& fontId, bool& bold) {
-  const char* font = obj["font"] | nullptr;
+  const char* font = obj["font"].as<const char*>();
   if (font != nullptr) {
     if (strcmp(font, "ui10") == 0) {
       fontId = UI_10_FONT_ID;
@@ -199,7 +199,7 @@ void applyFontSpec(JsonObjectConst obj, int& fontId, bool& bold) {
   }
 
   bold = obj["bold"] | bold;
-  const char* style = obj["style"] | nullptr;
+  const char* style = obj["style"].as<const char*>();
   if (style != nullptr) {
     bold = strcmp(style, "bold") == 0;
   }
@@ -218,7 +218,7 @@ void parseButtonMenuSpec(JsonObjectConst obj, ThemeButtonMenuSpec& spec) {
   spec.selectionCornerRadius = obj["selectionCornerRadius"] | spec.selectionCornerRadius;
   spec.selectionInset = obj["selectionInset"] | spec.selectionInset;
 
-  const char* selectionStyle = obj["selectionStyle"] | nullptr;
+  const char* selectionStyle = obj["selectionStyle"].as<const char*>();
   if (selectionStyle != nullptr) {
     if (strcmp(selectionStyle, "outline") == 0) {
       spec.selectionStyle = ThemeMenuSelectionStyle::Outline;

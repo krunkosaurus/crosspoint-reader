@@ -131,6 +131,21 @@ Convert your own TTF/OTF files into `.cpfont` files that load from the SD card. 
 
 Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` script unmodified, so output matches a local host build.
 
+## Custom SD-card themes
+
+Downloadable themes are packaged under `sd-themes/<theme-id>/`. Each theme folder must contain a `theme.json`; optional assets such as generated BMP icons live beside it, usually under `icons/`.
+
+After adding or changing a hosted theme, regenerate the download manifest:
+
+```bash
+python3 scripts/generate-theme-manifest.py \
+  --root sd-themes \
+  --base-url http://crosspointreader.com/themes/ \
+  --output sd-themes/themes.json
+```
+
+The script scans every theme folder, includes every file in each package, and writes size and CRC32 values used by the device downloader. Commit both the changed theme package files and the regenerated `sd-themes/themes.json`.
+
 ---
 
 ## Documentation

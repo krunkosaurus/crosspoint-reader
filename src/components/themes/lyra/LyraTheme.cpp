@@ -848,8 +848,6 @@ void LyraTheme::drawCoverStripRecents(GfxRenderer& renderer, Rect rect, const st
     y += slot.yOffset;
 
     const bool selectedCover = slot.selected && (slot.book != ThemeBookRef::Index || bookIndex == selected);
-    LOG_DBG("THEME", "Cover slot book=%d xMode=%d yMode=%d rect=%d,%d %dx%d selected=%d", bookIndex,
-            static_cast<int>(slot.x), static_cast<int>(slot.y), x, y, w, h, selectedCover);
     drawCover(bookIndex, x, y, w, h, selectedCover);
 
     if (slot.title.enabled) {
