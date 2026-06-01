@@ -39,6 +39,15 @@ struct Sink {
   size_t downloaded = 0;
 };
 
+esp_err_t captureLocationHeader(esp_http_client_event_t* evt) {
+  auto* location = static_cast<std::string*>(evt->user_data);
+  if (evt->event_id == HTTP_EVENT_ON_HEADER && location != nullptr && evt->header_key != nullptr &&
+      evt->header_value != nullptr && strcasecmp(evt->header_key, "Location") == 0) {
+    location->append(evt->header_value);
+  }
+  return ESP_OK;
+}
+
 bool isRedirect(int status) {
   return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
@@ -83,6 +92,26 @@ bool isGitHubHost(const std::string& host) {
 bool useMinimalClientForUrl(const std::string& url) {
   ParsedUrl parsed;
   return parseUrl(url, parsed) && parsed.https && isGitHubHost(parsed.host);
+}
+
+std::string buildRedirectUrl(const std::string& baseUrl, const std::string& location) {
+  if (location.find("http://") == 0 || location.find("https://") == 0) return location;
+
+  ParsedUrl base;
+  if (!parseUrl(baseUrl, base)) return location;
+
+  std::string origin = base.https ? "https://" : "http://";
+  origin += base.host;
+  if ((base.https && base.port != 443) || (!base.https && base.port != 80)) {
+    origin += ":";
+    origin += std::to_string(base.port);
+  }
+
+  if (!location.empty() && location[0] == '/') return origin + location;
+
+  const size_t lastSlash = base.path.rfind('/');
+  const std::string parent = lastSlash == std::string::npos ? "/" : base.path.substr(0, lastSlash + 1);
+  return origin + parent + location;
 }
 
 bool readLine(NetworkClient& client, std::string& out, size_t maxLen = 2048) {
@@ -250,103 +279,119 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     return runGetWithMinimalClient(url, sink);
   }
 
-  esp_http_client_config_t config = {};
-  config.url = url.c_str();
-  config.buffer_size = HTTP_RX_BUF;
-  config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
-  // Verify HTTPS against the bundled CA roots. This build has esp-tls
-  // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
-  // up at all; the model is public servers over verified https and local
-  // servers over plain http (esp_http_client picks the transport from the URL
-  // scheme, so http:// needs no cert config). The prior setInsecure() worked
-  // only because Arduino's ssl_client drives mbedtls directly.
-  config.crt_bundle_attach = esp_crt_bundle_attach;
-  config.keep_alive_enable = false;
+  std::string currentUrl = url;
+  for (int hop = 0; hop < 5; ++hop) {
+    std::string redirectLocation;
+    esp_http_client_config_t config = {};
+    config.url = currentUrl.c_str();
+    config.buffer_size = HTTP_RX_BUF;
+    config.buffer_size_tx = HTTP_TX_BUF;
+    config.timeout_ms = HTTP_TIMEOUT_MS;
+    // Verify HTTPS against the bundled CA roots. This build has esp-tls
+    // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
+    // up at all; the model is public servers over verified https and local
+    // servers over plain http (esp_http_client picks the transport from the URL
+    // scheme, so http:// needs no cert config). The prior setInsecure() worked
+    // only because Arduino's ssl_client drives mbedtls directly.
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+    config.keep_alive_enable = false;
+    config.event_handler = captureLocationHeader;
+    config.user_data = &redirectLocation;
 
-  esp_http_client_handle_t client = esp_http_client_init(&config);
-  if (!client) {
-    LOG_ERR("HTTP", "client init failed");
-    return HttpDownloader::HTTP_ERROR;
-  }
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+      LOG_ERR("HTTP", "client init failed");
+      return HttpDownloader::HTTP_ERROR;
+    }
 
-  esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
-  esp_http_client_set_header(client, "Connection", "close");
-  if (!username.empty() && !password.empty()) {
-    // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
-    const std::string credentials = username + ":" + password;
-    const String header = "Basic " + base64::encode(credentials.c_str());
-    esp_http_client_set_header(client, "Authorization", header.c_str());
-  }
+    esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+    esp_http_client_set_header(client, "Connection", "close");
+    if (!username.empty() && !password.empty()) {
+      // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
+      const std::string credentials = username + ":" + password;
+      const String header = "Basic " + base64::encode(credentials.c_str());
+      esp_http_client_set_header(client, "Authorization", header.c_str());
+    }
 
-  // open()/read() does not auto-follow redirects (only perform() does), so step
-  // 30x responses manually. OPDS download endpoints and the GitHub release CDN
-  // both redirect.
-  esp_err_t err = esp_http_client_open(client, 0);
-  if (err != ESP_OK) {
-    LOG_ERR("HTTP", "open failed: %s", esp_err_to_name(err));
-    esp_http_client_cleanup(client);
-    return HttpDownloader::HTTP_ERROR;
-  }
-  int64_t contentLength = esp_http_client_fetch_headers(client);
-  int status = esp_http_client_get_status_code(client);
-  for (int hop = 0; isRedirect(status) && hop < 5; ++hop) {
-    if (esp_http_client_set_redirection(client) != ESP_OK) break;
-    err = esp_http_client_open(client, 0);
+    const esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
-      LOG_ERR("HTTP", "redirect open failed: %s", esp_err_to_name(err));
+      LOG_ERR("HTTP", "open failed: %s", esp_err_to_name(err));
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }
-    contentLength = esp_http_client_fetch_headers(client);
-    status = esp_http_client_get_status_code(client);
-  }
 
-  if (status != 200) {
-    LOG_ERR("HTTP", "unexpected status: %d", status);
-    esp_http_client_cleanup(client);
-    return HttpDownloader::HTTP_ERROR;
-  }
-
-  // fetch_headers returns 0 for a chunked response (no Content-Length); leave
-  // total at 0 so progress stays silent and the size check is skipped.
-  sink.total = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
-
-  auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
-  if (!buf) {
-    LOG_ERR("HTTP", "OOM: %u byte read buffer", (unsigned)READ_CHUNK);
-    esp_http_client_cleanup(client);
-    return HttpDownloader::HTTP_ERROR;
-  }
-
-  while (true) {
-    if (sink.cancelFlag && *sink.cancelFlag) {
-      esp_http_client_cleanup(client);
-      return HttpDownloader::ABORTED;
-    }
-    const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
-    if (read < 0) {
-      LOG_ERR("HTTP", "read error after %zu bytes", sink.downloaded);
+    const int64_t contentLength = esp_http_client_fetch_headers(client);
+    const int status = esp_http_client_get_status_code(client);
+    if (contentLength < 0 && status < 0) {
+      LOG_ERR("HTTP", "fetch headers failed");
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }
-    if (read == 0) break;  // all data received
-    if (!sink.write(reinterpret_cast<const uint8_t*>(buf.get()), read)) {
+
+    if (isRedirect(status)) {
+      if (redirectLocation.empty()) {
+        LOG_ERR("HTTP", "redirect missing location");
+        esp_http_client_cleanup(client);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      currentUrl = buildRedirectUrl(currentUrl, redirectLocation);
+      ParsedUrl redirect;
+      if (parseUrl(currentUrl, redirect)) {
+        LOG_DBG("HTTP", "Redirecting to: %s", redirect.host.c_str());
+      }
       esp_http_client_cleanup(client);
-      return HttpDownloader::FILE_ERROR;
+      continue;
     }
-    sink.downloaded += read;
-    if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
-    if (sink.total > 0 && sink.downloaded >= sink.total) break;
+
+    if (status != 200) {
+      LOG_ERR("HTTP", "unexpected status: %d", status);
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+
+    // fetch_headers returns 0 for a chunked response (no Content-Length); leave
+    // total at 0 so progress stays silent and the size check is skipped.
+    sink.total = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
+
+    auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
+    if (!buf) {
+      LOG_ERR("HTTP", "OOM: %u byte read buffer", (unsigned)READ_CHUNK);
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+
+    while (true) {
+      if (sink.cancelFlag && *sink.cancelFlag) {
+        esp_http_client_cleanup(client);
+        return HttpDownloader::ABORTED;
+      }
+      const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
+      if (read < 0) {
+        LOG_ERR("HTTP", "read error after %zu bytes", sink.downloaded);
+        esp_http_client_cleanup(client);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      if (read == 0) break;  // all data received
+      if (!sink.write(reinterpret_cast<const uint8_t*>(buf.get()), read)) {
+        esp_http_client_cleanup(client);
+        return HttpDownloader::FILE_ERROR;
+      }
+      sink.downloaded += read;
+      if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+      if (sink.total > 0 && sink.downloaded >= sink.total) break;
+    }
+
+    const bool complete = esp_http_client_is_complete_data_received(client);
+    esp_http_client_cleanup(client);
+    if (!complete) {
+      LOG_ERR("HTTP", "incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    return HttpDownloader::OK;
   }
 
-  const bool complete = esp_http_client_is_complete_data_received(client);
-  esp_http_client_cleanup(client);
-  if (!complete) {
-    LOG_ERR("HTTP", "incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
-    return HttpDownloader::HTTP_ERROR;
-  }
-  return HttpDownloader::OK;
+  LOG_ERR("HTTP", "redirect failed");
+  return HttpDownloader::HTTP_ERROR;
 }
 }  // namespace
 
