@@ -133,7 +133,7 @@ inline SettingInfo buildUiThemeSetting(const SdCardThemeRegistry* registry) {
     }
 
     const int sdIdx = v - 1;
-    if (sdIdx >= 0 && sdIdx < static_cast<int>(sdThemeIds.size())) {
+    if (sdIdx < static_cast<int>(sdThemeIds.size())) {
       strncpy(SETTINGS.sdThemeName, sdThemeIds[sdIdx].c_str(), sizeof(SETTINGS.sdThemeName) - 1);
       SETTINGS.sdThemeName[sizeof(SETTINGS.sdThemeName) - 1] = '\0';
     }

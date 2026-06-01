@@ -500,9 +500,9 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                                                                                              : spec.titleOffsetY);
       renderer.drawText(spec.fontId, textX, titleY, item.c_str(), !(selected && spec.selectedTextInverted), titleStyle);
       if (selected && spec.selectionStyle == ThemeMenuSelectionStyle::Underline) {
-        const int textWidth = renderer.getTextWidth(spec.fontId, item.c_str(), titleStyle);
+        const int underlineWidth = renderer.getTextWidth(spec.fontId, item.c_str(), titleStyle);
         const int underlineY = std::min(itemY + rowHeight - 4, titleY + renderer.getLineHeight(spec.fontId) + 2);
-        renderer.drawLine(textX, underlineY, textX + textWidth - 1, underlineY, 1, true);
+        renderer.drawLine(textX, underlineY, textX + underlineWidth - 1, underlineY, 1, true);
       }
 
       if (rowDimmed && rowDimmed(i) && !selected) {
