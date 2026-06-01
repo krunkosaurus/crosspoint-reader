@@ -144,7 +144,10 @@ bool ThemeDownloadActivity::fetchAndParseManifest() {
     if (theme.installed) {
       for (const auto& file : theme.files) {
         char path[180];
-        ThemeInstaller::buildThemePath(theme.id.c_str(), file.path.c_str(), path, sizeof(path));
+        if (!ThemeInstaller::buildThemePath(theme.id.c_str(), file.path.c_str(), path, sizeof(path))) {
+          errorMessage_ = tr(STR_DOWNLOAD_FAILED);
+          return false;
+        }
         HalFile f;
         if (Storage.openFileForRead("THEME", path, f)) {
           const size_t actual = f.fileSize();
@@ -277,7 +280,12 @@ void ThemeDownloadActivity::downloadTheme(ManifestTheme& theme) {
     requestUpdateAndWait();
 
     char destPath[180];
-    ThemeInstaller::buildThemePath(theme.id.c_str(), file.path.c_str(), destPath, sizeof(destPath));
+    if (!ThemeInstaller::buildThemePath(theme.id.c_str(), file.path.c_str(), destPath, sizeof(destPath))) {
+      RenderLock lock(*this);
+      state_ = ERROR;
+      errorMessage_ = tr(STR_DOWNLOAD_FAILED);
+      return;
+    }
     if (!themeInstaller_.ensureParentDirs(destPath)) {
       RenderLock lock(*this);
       state_ = ERROR;

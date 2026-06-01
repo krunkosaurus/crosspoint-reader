@@ -20,7 +20,7 @@ class ThemeInstaller {
   bool ensureThemeDir(const char* themeId);
   bool ensureParentDirs(const char* fullPath);
   bool validateThemeFile(const char* path);
-  static void buildThemePath(const char* themeId, const char* relativePath, char* outBuf, size_t outBufSize);
+  static bool buildThemePath(const char* themeId, const char* relativePath, char* outBuf, size_t outBufSize);
   Error deleteTheme(const char* themeId);
   void refreshRegistry();
   bool isThemeInstalled(const char* themeId) const;
