@@ -84,14 +84,21 @@ bool parseUrl(const std::string& url, ParsedUrl& out) {
 }
 
 bool isGitHubHost(const std::string& host) {
+  static constexpr const char* GITHUBUSERCONTENT_SUFFIX = ".githubusercontent.com";
+  const size_t suffixLen = strlen(GITHUBUSERCONTENT_SUFFIX);
   return host == "github.com" || host == "gist.github.com" || host == "raw.githubusercontent.com" ||
          host == "release-assets.githubusercontent.com" || host == "objects.githubusercontent.com" ||
-         (host.size() > 18 && host.compare(host.size() - 18, 18, ".githubusercontent.com") == 0);
+         (host.size() > suffixLen &&
+          host.compare(host.size() - suffixLen, suffixLen, GITHUBUSERCONTENT_SUFFIX) == 0);
 }
 
 bool useMinimalClientForUrl(const std::string& url) {
   ParsedUrl parsed;
   return parseUrl(url, parsed) && parsed.https && isGitHubHost(parsed.host);
+}
+
+bool sameOrigin(const ParsedUrl& a, const ParsedUrl& b) {
+  return a.https == b.https && a.port == b.port && strcasecmp(a.host.c_str(), b.host.c_str()) == 0;
 }
 
 std::string buildRedirectUrl(const std::string& baseUrl, const std::string& location) {
@@ -280,7 +287,12 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   std::string currentUrl = url;
+  ParsedUrl credentialOrigin;
+  const bool hasCredentials = !username.empty() && !password.empty() && parseUrl(url, credentialOrigin);
   for (int hop = 0; hop < 5; ++hop) {
+    ParsedUrl currentOrigin;
+    const bool sendAuthorization =
+        hasCredentials && parseUrl(currentUrl, currentOrigin) && sameOrigin(currentOrigin, credentialOrigin);
     std::string redirectLocation;
     esp_http_client_config_t config = {};
     config.url = currentUrl.c_str();
@@ -306,7 +318,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 
     esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
     esp_http_client_set_header(client, "Connection", "close");
-    if (!username.empty() && !password.empty()) {
+    if (sendAuthorization) {
       // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
       const std::string credentials = username + ":" + password;
       const String header = "Basic " + base64::encode(credentials.c_str());
