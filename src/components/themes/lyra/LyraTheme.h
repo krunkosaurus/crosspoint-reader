@@ -119,7 +119,7 @@ class LyraTheme : public BaseTheme {
   const ThemeIconMap* icons_;
   const ThemeMetrics& metrics() const { return metrics_ ? *metrics_ : LyraMetrics::values; }
   bool hasThemeIcon(UIIcon icon) const;
-  bool drawThemeIcon(GfxRenderer& renderer, UIIcon icon, int x, int y, int size) const;
+  bool drawThemeIcon(const GfxRenderer& renderer, UIIcon icon, int x, int y, int size) const;
   void drawCoverStripRecents(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                              int selectorIndex, bool& coverRendered, bool& coverBufferStored) const;
 };

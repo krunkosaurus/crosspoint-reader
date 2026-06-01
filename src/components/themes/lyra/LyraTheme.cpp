@@ -91,7 +91,7 @@ bool LyraTheme::hasThemeIcon(UIIcon icon) const {
   return assetRoot_ != nullptr && icons_ != nullptr && icons_->find(icon) != icons_->end();
 }
 
-bool LyraTheme::drawThemeIcon(GfxRenderer& renderer, UIIcon icon, int x, int y, int size) const {
+bool LyraTheme::drawThemeIcon(const GfxRenderer& renderer, UIIcon icon, int x, int y, int size) const {
   if (assetRoot_ == nullptr || icons_ == nullptr || !isBmpIconSize(size)) return false;
   const auto it = icons_->find(icon);
   if (it == icons_->end() || it->second.empty()) return false;
