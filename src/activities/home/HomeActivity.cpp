@@ -263,9 +263,10 @@ void HomeActivity::render(RenderLock&&) {
       (!selectorSensitiveCoverCache || coverBufferSelectorIndex == coverSelectorIndex) && restoreCoverBuffer();
 
   if (hasCoverArea) {
+    const bool coverStripSelected = selectorIndex < static_cast<int>(recentBooks.size());
     GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                             recentBooks, coverSelectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                            std::bind(&HomeActivity::storeCoverBuffer, this));
+                            std::bind(&HomeActivity::storeCoverBuffer, this), coverStripSelected);
   } else {
     coverRendered = false;
     coverBufferStored = false;

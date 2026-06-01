@@ -165,6 +165,7 @@ void parseHomeRecentsSpec(JsonObjectConst obj, ThemeHomeRecentsSpec& spec) {
   spec.panelCornerRadius = obj["panelCornerRadius"] | spec.panelCornerRadius;
   spec.panelInsetX = obj["panelInsetX"] | spec.panelInsetX;
   spec.selectionLineWidth = obj["selectionLineWidth"] | spec.selectionLineWidth;
+  spec.inactiveSelectionLineWidth = obj["inactiveSelectionLineWidth"] | spec.inactiveSelectionLineWidth;
   spec.selectionCornerRadius = obj["selectionCornerRadius"] | spec.selectionCornerRadius;
 
   JsonArrayConst slots = obj["slots"].as<JsonArrayConst>();

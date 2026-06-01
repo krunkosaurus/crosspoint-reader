@@ -21,6 +21,7 @@
       "maxBooks": 3,
       "wrap": true,
       "selectionLineWidth": 3,
+      "inactiveSelectionLineWidth": 1,
       "selectionCornerRadius": 6,
       "slots": [
         {

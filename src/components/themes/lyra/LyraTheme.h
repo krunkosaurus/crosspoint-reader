@@ -112,7 +112,7 @@ class LyraTheme : public BaseTheme {
   }
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer) const override;
+                           std::function<bool()> storeCoverBuffer, bool coverStripSelected = true) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }
 
@@ -131,5 +131,5 @@ class LyraTheme : public BaseTheme {
   bool drawThemeIcon(const GfxRenderer& renderer, UIIcon icon, int x, int y, int size) const;
   void drawCoverStripRecents(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                              int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool bufferRestored,
-                             std::function<bool()> storeCoverBuffer) const;
+                             std::function<bool()> storeCoverBuffer, bool coverStripSelected) const;
 };

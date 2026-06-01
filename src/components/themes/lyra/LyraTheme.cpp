@@ -532,7 +532,8 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
       if (rowSubtitle != nullptr && !subtitleText.empty()) {
         const auto subtitle = renderer.truncatedText(spec.subtitleFontId, subtitleText.c_str(), rowTextWidth);
-        renderer.drawText(spec.subtitleFontId, textX, itemY + spec.subtitleOffsetY, subtitle.c_str(), true);
+        renderer.drawText(spec.subtitleFontId, textX, itemY + spec.subtitleOffsetY, subtitle.c_str(),
+                          !(selected && spec.selectedTextInverted));
       }
 
       if (!valueText.empty()) {
@@ -807,10 +808,11 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                     const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                    bool coverStripSelected) const {
   if (homeRecents_ != nullptr && homeRecents_->type == ThemeHomeRecentsType::CoverStrip) {
     drawCoverStripRecents(renderer, rect, recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          storeCoverBuffer);
+                          storeCoverBuffer, coverStripSelected);
     return;
   }
   if (homeRecents_ != nullptr && homeRecents_->type == ThemeHomeRecentsType::None) {
@@ -916,7 +918,7 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 void LyraTheme::drawCoverStripRecents(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                       const int selectorIndex, bool& coverRendered,
                                       bool& coverBufferStored, bool bufferRestored,
-                                      std::function<bool()> storeCoverBuffer) const {
+                                      std::function<bool()> storeCoverBuffer, bool coverStripSelected) const {
   if (bufferRestored && coverRendered) {
     return;
   }
@@ -1003,9 +1005,12 @@ void LyraTheme::drawCoverStripRecents(GfxRenderer& renderer, Rect rect, const st
 
     renderer.drawRect(x, y, w, h, true);
     if (selectedCover) {
-      for (int i = 0; i < std::max(1, spec.selectionLineWidth); ++i) {
+      const int inactiveWidth = spec.inactiveSelectionLineWidth > 0 ? spec.inactiveSelectionLineWidth
+                                                                    : spec.selectionLineWidth;
+      const int lineWidth = std::max(1, coverStripSelected ? spec.selectionLineWidth : inactiveWidth);
+      for (int i = 0; i < lineWidth; ++i) {
         renderer.drawRoundedRect(x - 6 - i, y - 6 - i, w + 12 + 2 * i, h + 12 + 2 * i,
-                                 std::max(1, spec.selectionLineWidth), spec.selectionCornerRadius, true);
+                                 lineWidth, spec.selectionCornerRadius, true);
       }
     }
   };
