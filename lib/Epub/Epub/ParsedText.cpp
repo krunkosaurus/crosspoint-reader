@@ -125,6 +125,24 @@ bool isNoBreakAfterCjkPunctuation(const uint32_t cp) {
   }
 }
 
+bool containsCjkBreakableCodepoint(const std::string& text) {
+  const auto* ptr = reinterpret_cast<const unsigned char*>(text.c_str());
+  while (*ptr) {
+    const uint32_t cp = utf8NextCodepoint(&ptr);
+    if (utf8IsCjkBreakable(cp)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasCjkBreakOpportunityBetween(const uint32_t leftCp, const uint32_t rightCp) {
+  if (!utf8IsCjkBreakable(leftCp) && !utf8IsCjkBreakable(rightCp)) return false;
+  if (isNoBreakAfterCjkPunctuation(leftCp) || isNoBreakBeforeCjkPunctuation(rightCp)) return false;
+  if (utf8IsCombiningMark(rightCp)) return false;
+  return true;
+}
+
 std::vector<size_t> cjkCharacterBreakByteOffsets(const std::string& text) {
   struct CodepointBoundary {
     uint32_t cp;
@@ -153,9 +171,7 @@ std::vector<size_t> cjkCharacterBreakByteOffsets(const std::string& text) {
   for (size_t i = 0; i + 1 < codepoints.size(); ++i) {
     const uint32_t current = codepoints[i].cp;
     const uint32_t next = codepoints[i + 1].cp;
-    if (!utf8IsCjkBreakable(current) && !utf8IsCjkBreakable(next)) continue;
-    if (isNoBreakAfterCjkPunctuation(current) || isNoBreakBeforeCjkPunctuation(next)) continue;
-    if (utf8IsCombiningMark(next)) continue;
+    if (!hasCjkBreakOpportunityBetween(current, next)) continue;
     allowedOffsets.push_back(codepoints[i].endOffset);
   }
   return allowedOffsets;
@@ -251,19 +267,36 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordIsFocusSuffix.push_back(isFocusSuffix);
   };
 
+  bool effectiveAttachToPrevious = attachToPrevious;
+  bool effectiveNoSpaceBefore = false;
+  if (attachToPrevious && !words.empty() &&
+      hasCjkBreakOpportunityBetween(lastCodepoint(words.back()), firstCodepoint(word))) {
+    effectiveAttachToPrevious = false;
+    effectiveNoSpaceBefore = true;
+  }
+
   if (auto breakOffsets = cjkCharacterBreakByteOffsets(word); !breakOffsets.empty()) {
     bool firstToken = true;
     size_t tokenStart = 0;
     for (const size_t breakOffset : breakOffsets) {
       if (breakOffset <= tokenStart || breakOffset > word.size()) continue;
-      pushToken(word.substr(tokenStart, breakOffset - tokenStart), firstToken ? attachToPrevious : false, !firstToken,
-                false);
+      pushToken(word.substr(tokenStart, breakOffset - tokenStart), firstToken ? effectiveAttachToPrevious : false,
+                firstToken ? effectiveNoSpaceBefore : true, false);
       firstToken = false;
       tokenStart = breakOffset;
     }
     if (tokenStart < word.size()) {
-      pushToken(word.substr(tokenStart), firstToken ? attachToPrevious : false, !firstToken, false);
+      pushToken(word.substr(tokenStart), firstToken ? effectiveAttachToPrevious : false,
+                firstToken ? effectiveNoSpaceBefore : true, false);
     }
+    if (wordStartsRtl) {
+      hasRtlWord = true;
+    }
+    return;
+  }
+
+  if (containsCjkBreakableCodepoint(word)) {
+    pushToken(std::move(word), effectiveAttachToPrevious, effectiveNoSpaceBefore, false);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }
@@ -272,11 +305,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
 
   // Already-bold text should stay fully bold; focus splitting would make its suffix regular later.
   if (!this->focusReadingEnabled || (baseStyle & EpdFontFamily::BOLD) != 0) {
-    words.push_back(std::move(word));
-    wordStyles.push_back(baseStyle);
-    wordContinues.push_back(attachToPrevious);
-    wordNoSpaceBefore.push_back(false);
-    wordIsFocusSuffix.push_back(false);
+    pushToken(std::move(word), effectiveAttachToPrevious, effectiveNoSpaceBefore, false);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }
@@ -311,13 +340,13 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
 
   // Lambda helper to process and push individual sub-segments of the string
   // Use std::string_view to avoid heap allocations when slicing
-  auto processSegment = [&](std::string_view segment, bool isWord, bool attach) {
+  auto processSegment = [&](std::string_view segment, bool isWord, bool attach, bool noSpaceBefore) {
     if (!isWord) {
       // Punctuation and Numbers stay regular
       words.emplace_back(segment);
       wordStyles.push_back(baseStyle);
       wordContinues.push_back(attach);
-      wordNoSpaceBefore.push_back(false);
+      wordNoSpaceBefore.push_back(noSpaceBefore);
       wordIsFocusSuffix.push_back(false);
     } else {
       size_t charCount = 0;
@@ -339,7 +368,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         words.emplace_back(segment);
         wordStyles.push_back(static_cast<EpdFontFamily::Style>(baseStyle | EpdFontFamily::BOLD));
         wordContinues.push_back(attach);
-        wordNoSpaceBefore.push_back(false);
+        wordNoSpaceBefore.push_back(noSpaceBefore);
         wordIsFocusSuffix.push_back(false);
       } else {
         countPtr = reinterpret_cast<const unsigned char*>(segment.data());
@@ -352,7 +381,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         words.emplace_back(segment.substr(0, splitByteOffset));
         wordStyles.push_back(static_cast<EpdFontFamily::Style>(baseStyle | EpdFontFamily::BOLD));
         wordContinues.push_back(attach);
-        wordNoSpaceBefore.push_back(false);
+        wordNoSpaceBefore.push_back(noSpaceBefore);
         wordIsFocusSuffix.push_back(false);
 
         // Regular suffix - marked so extractLine can merge it back into single TextBlock entry
@@ -387,7 +416,8 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
 
       // Only the very first segment inherits the original attachToPrevious flag.
       // Every subsequent segment MUST attach=true so it glues seamlessly to the prefix.
-      processSegment(segment, inWordSegment, isFirstSegment ? attachToPrevious : true);
+      processSegment(segment, inWordSegment, isFirstSegment ? effectiveAttachToPrevious : true,
+                     isFirstSegment ? effectiveNoSpaceBefore : false);
 
       // Setup for the next segment
       segmentStart = currentCpStart;
@@ -399,7 +429,8 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   // Process the final remaining segment
   size_t segmentLen = end - segmentStart;
   std::string_view segment(reinterpret_cast<const char*>(segmentStart), segmentLen);
-  processSegment(segment, inWordSegment, isFirstSegment ? attachToPrevious : true);
+  processSegment(segment, inWordSegment, isFirstSegment ? effectiveAttachToPrevious : true,
+                 isFirstSegment ? effectiveNoSpaceBefore : false);
   if (wordStartsRtl) {
     hasRtlWord = true;
   }

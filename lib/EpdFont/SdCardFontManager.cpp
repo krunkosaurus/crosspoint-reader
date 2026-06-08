@@ -6,6 +6,39 @@
 #include <SdCardFont.h>
 #include <SdCardFontRegistry.h>
 
+#include <vector>
+
+namespace {
+
+uint8_t targetPointSizeForEnum(const uint8_t fontSizeEnum) {
+  switch (fontSizeEnum) {
+    case 0:
+      return 12;
+    case 1:
+    default:
+      return 14;
+    case 2:
+      return 16;
+    case 3:
+      return 18;
+  }
+}
+
+uint8_t closestPointSize(const std::vector<uint8_t>& sizes, const uint8_t target) {
+  uint8_t best = sizes.front();
+  uint8_t bestDelta = best > target ? best - target : target - best;
+  for (const uint8_t size : sizes) {
+    const uint8_t delta = size > target ? size - target : target - size;
+    if (delta < bestDelta || (delta == bestDelta && size < best)) {
+      best = size;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
+}  // namespace
+
 SdCardFontManager::~SdCardFontManager() {
   for (auto& lf : loaded_) {
     delete lf.font;
@@ -34,18 +67,18 @@ bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRender
     unloadAll(renderer);
   }
 
-  // Select by ordinal position: sort available sizes, then map the font size
-  // enum (SMALL=0 .. EXTRA_LARGE=3) to the corresponding slot. When the
-  // family has fewer sizes than 4, clamp to the last available size.
+  // Select the physical point size closest to the built-in reader sizes. Some
+  // CJK font packs only ship larger sizes, so ordinal selection can make
+  // MEDIUM load 18pt+ and produce oversized pages on small devices.
   auto sizes = family.availableSizes();
   if (sizes.empty()) {
     LOG_ERR("SDMGR", "Family %s has no files to load", family.name.c_str());
     return false;
   }
 
-  uint8_t idx = fontSizeEnum;
-  if (idx >= sizes.size()) idx = sizes.size() - 1;
-  const SdCardFontFileInfo* selected = family.findFile(sizes[idx]);
+  const uint8_t targetPt = targetPointSizeForEnum(fontSizeEnum);
+  const uint8_t selectedPt = closestPointSize(sizes, targetPt);
+  const SdCardFontFileInfo* selected = family.findFile(selectedPt);
 
   auto* font = new (std::nothrow) SdCardFont();
   if (!font) {
