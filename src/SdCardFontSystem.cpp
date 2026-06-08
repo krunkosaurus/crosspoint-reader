@@ -3,8 +3,6 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 
-#include <vector>
-
 #include "CrossPointSettings.h"
 
 namespace {
@@ -13,33 +11,6 @@ static uint8_t fontSizeEnumFromSettings() {
   uint8_t e = SETTINGS.fontSize;
   if (e >= CrossPointSettings::FONT_SIZE_COUNT) e = 1;  // default to MEDIUM
   return e;
-}
-
-uint8_t targetPointSizeForEnum(const uint8_t fontSizeEnum) {
-  switch (fontSizeEnum) {
-    case CrossPointSettings::SMALL:
-      return 12;
-    case CrossPointSettings::MEDIUM:
-    default:
-      return 14;
-    case CrossPointSettings::LARGE:
-      return 16;
-    case CrossPointSettings::EXTRA_LARGE:
-      return 18;
-  }
-}
-
-uint8_t closestPointSize(const std::vector<uint8_t>& sizes, const uint8_t target) {
-  uint8_t best = sizes.front();
-  uint8_t bestDelta = best > target ? best - target : target - best;
-  for (const uint8_t size : sizes) {
-    const uint8_t delta = size > target ? size - target : target - size;
-    if (delta < bestDelta || (delta == bestDelta && size < best)) {
-      best = size;
-      bestDelta = delta;
-    }
-  }
-  return best;
 }
 
 }  // namespace
@@ -107,8 +78,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
       SETTINGS.sdFontFamilyName[0] = '\0';
       return;
     }
-    auto sizes = family->availableSizes();
-    uint8_t wantedPt = sizes.empty() ? 0 : closestPointSize(sizes, targetPointSizeForEnum(sizeEnum));
+    const auto* selected = family->findClosestReaderSize(sizeEnum);
+    const uint8_t wantedPt = selected ? selected->pointSize : 0;
     if (!registryWasDirty && wantedPt == manager_.currentPointSize()) return;
     LOG_DBG("SDFS", "Reloading %s: size %u -> %u (enum %u)%s", wantedFamily, manager_.currentPointSize(), wantedPt,
             sizeEnum, registryWasDirty ? " [registry dirty]" : "");
