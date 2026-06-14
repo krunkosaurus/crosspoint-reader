@@ -175,6 +175,10 @@ void EpubReaderActivity::onExit() {
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
+  if (bookPageMapInitialized && epub) {
+    bookPageMap.save(epub->getCachePath() + "/pagemap.bin");
+  }
+
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
   section.reset();
@@ -770,6 +774,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
   const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
 
+  ensurePageMap(viewportWidth, viewportHeight);
+
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
@@ -845,6 +851,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       section->currentPage = newPage;
       pendingPercentJump = false;
     }
+  }
+
+  if (section) {
+    bookPageMap.recordSection(currentSpineIndex, section->pageCount);
   }
 
   renderer.clearScreen();
@@ -934,6 +944,43 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
                                      SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
   }
+}
+
+PageMapFingerprint EpubReaderActivity::currentFingerprint(const uint16_t viewportWidth,
+                                                          const uint16_t viewportHeight) const {
+  PageMapFingerprint fp;
+  fp.fontId = SETTINGS.getReaderFontId();
+  fp.lineCompression = SETTINGS.getReaderLineCompression();
+  fp.extraParagraphSpacing = SETTINGS.extraParagraphSpacing;
+  fp.paragraphAlignment = SETTINGS.paragraphAlignment;
+  fp.viewportWidth = viewportWidth;
+  fp.viewportHeight = viewportHeight;
+  fp.hyphenationEnabled = SETTINGS.hyphenationEnabled;
+  fp.embeddedStyle = SETTINGS.embeddedStyle;
+  fp.imageRendering = SETTINGS.imageRendering;
+  fp.focusReadingEnabled = SETTINGS.focusReadingEnabled;
+  return fp;
+}
+
+void EpubReaderActivity::ensurePageMap(const uint16_t viewportWidth, const uint16_t viewportHeight) {
+  const PageMapFingerprint fp = currentFingerprint(viewportWidth, viewportHeight);
+  if (bookPageMapInitialized && fp == bookPageMap.fingerprint()) {
+    return;
+  }
+  // (Re)build: a fingerprint change means the section caches and the persisted
+  // pagemap are invalid (load() below will reject a stale file).
+  std::vector<uint32_t> bytes;
+  const int n = epub->getSpineItemsCount();
+  bytes.reserve(n);
+  size_t prev = 0;
+  for (int i = 0; i < n; ++i) {
+    const size_t cum = epub->getCumulativeSpineItemSize(i);
+    bytes.push_back(static_cast<uint32_t>(cum >= prev ? cum - prev : 0));
+    prev = cum;
+  }
+  bookPageMap.init(std::move(bytes), fp);
+  bookPageMap.load(epub->getCachePath() + "/pagemap.bin");
+  bookPageMapInitialized = true;
 }
 
 bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageCount) {
