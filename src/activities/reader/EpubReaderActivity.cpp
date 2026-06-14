@@ -274,10 +274,11 @@ void EpubReaderActivity::loop() {
         bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
       }
       const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
+      const bool smartPages = SETTINGS.smartCalculateTotalPages && bookPageMapInitialized;
       const int bookCurrentPage =
-          (section && bookPageMapInitialized) ? bookPageMap.globalPage(currentSpineIndex, section->currentPage) : 0;
-      const int bookTotalPages = bookPageMapInitialized ? bookPageMap.total() : 0;
-      const bool bookTotalIsEstimate = bookPageMapInitialized ? !bookPageMap.isExact() : false;
+          (smartPages && section) ? bookPageMap.globalPage(currentSpineIndex, section->currentPage) : 0;
+      const int bookTotalPages = smartPages ? bookPageMap.total() : 0;
+      const bool bookTotalIsEstimate = smartPages ? !bookPageMap.isExact() : false;
       startActivityForResult(
           std::make_unique<EpubReaderMenuActivity>(
               renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent, bookCurrentPage,
@@ -862,7 +863,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
   }
 
-  if (section) {
+  if (section && SETTINGS.smartCalculateTotalPages) {
     bookPageMap.recordSection(currentSpineIndex, section->pageCount);
   }
 
@@ -949,7 +950,7 @@ void EpubReaderActivity::backgroundIndexIdle() {
   static constexpr unsigned long BACKGROUND_INDEX_IDLE_MS = 1500UL;     // reading-pause threshold
   static constexpr unsigned long BACKGROUND_INDEX_INTERVAL_MS = 750UL;  // min gap between sections
 
-  if (!epub || !bookPageMapInitialized || automaticPageTurnActive) {
+  if (!epub || !bookPageMapInitialized || automaticPageTurnActive || !SETTINGS.smartCalculateTotalPages) {
     return;
   }
   if (lastViewportWidth == 0 || lastViewportHeight == 0 || bookPageMap.isExact()) {
@@ -1025,6 +1026,9 @@ PageMapFingerprint EpubReaderActivity::currentFingerprint(const uint16_t viewpor
 }
 
 void EpubReaderActivity::ensurePageMap(const uint16_t viewportWidth, const uint16_t viewportHeight) {
+  if (!SETTINGS.smartCalculateTotalPages) {
+    return;  // opt-in feature: leave the map uninitialized so all book-page paths stay inert
+  }
   const PageMapFingerprint fp = currentFingerprint(viewportWidth, viewportHeight);
   if (bookPageMapInitialized && fp == bookPageMap.fingerprint()) {
     return;
@@ -1207,10 +1211,16 @@ void EpubReaderActivity::renderStatusBar() const {
   const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
 
   // Book-global page position for the counter text (chapter values above still
-  // drive the progress bar).
-  const int bookCurrentPage = bookPageMap.globalPage(currentSpineIndex, section->currentPage);
-  const int bookTotalPages = bookPageMap.total();
-  const bool bookTotalIsEstimate = !bookPageMap.isExact();
+  // drive the progress bar). Only when Smart Calculate Total Pages is on; otherwise
+  // pass -1 so drawStatusBar falls back to chapter-local counts.
+  int bookCurrentPage = -1;
+  int bookTotalPages = -1;
+  bool bookTotalIsEstimate = false;
+  if (SETTINGS.smartCalculateTotalPages && bookPageMapInitialized) {
+    bookCurrentPage = bookPageMap.globalPage(currentSpineIndex, section->currentPage);
+    bookTotalPages = bookPageMap.total();
+    bookTotalIsEstimate = !bookPageMap.isExact();
+  }
 
   std::string title;
 
