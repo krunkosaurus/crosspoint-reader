@@ -3058,18 +3058,25 @@
       // highlight flickering as the cursor moves over the hint text or input.
       let dragDepth = 0;
 
+      // An in-flight transfer can't be interrupted, so the zone is inert while
+      // uploading: no picker, no hover highlight — matching the disabled upload
+      // button and the drop handler's guard below.
+      const uploadBusy = () =>
+        typeof isUploadInProgress !== 'undefined' && isUploadInProgress;
+
       // "click to browse" should work anywhere in the zone, not just on the
       // native button. The hint has pointer-events:none so its clicks retarget
       // to the zone; clicks on the native button retarget to fileInput (shadow
       // DOM) and are skipped here so the picker isn't opened twice.
       dropZone.addEventListener('click', function(e) {
+        if (uploadBusy()) return;
         if (e.target !== fileInput) fileInput.click();
       });
 
       dropZone.addEventListener('dragenter', function(e) {
         e.preventDefault();
         dragDepth++;
-        dropZone.classList.add('dragover');
+        if (!uploadBusy()) dropZone.classList.add('dragover');
       });
 
       dropZone.addEventListener('dragover', function(e) {
@@ -3089,7 +3096,7 @@
         dropZone.classList.remove('dragover');
 
         // Don't let a drop disrupt an in-flight transfer.
-        if (typeof isUploadInProgress !== 'undefined' && isUploadInProgress) return;
+        if (uploadBusy()) return;
 
         const dropped = e.dataTransfer && e.dataTransfer.files;
         if (!dropped || dropped.length === 0) return;
