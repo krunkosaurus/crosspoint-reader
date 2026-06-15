@@ -953,9 +953,6 @@ void EpubReaderActivity::backgroundIndexIdle() {
   if (!epub || !bookPageMapInitialized || automaticPageTurnActive || !SETTINGS.smartCalculateTotalPages) {
     return;
   }
-  if (lastViewportWidth == 0 || lastViewportHeight == 0 || bookPageMap.isExact()) {
-    return;
-  }
   const unsigned long now = millis();
   const unsigned long idle = now - lastPageTurnTime;
   // Only paginate while the CPU is still at full clock. The main loop drops to
@@ -969,21 +966,26 @@ void EpubReaderActivity::backgroundIndexIdle() {
   if (now - lastBackgroundIndexTime < BACKGROUND_INDEX_INTERVAL_MS) {
     return;
   }
+  // bookPageMap and the viewport fields are shared with the render task, which
+  // mutates them under RenderLock (render() -> ensurePageMap()/recordSection();
+  // ensurePageMap() can reallocate the page vector). Hold the same lock for every
+  // shared-state access below to avoid a cross-task data race.
+  RenderLock lock;  // also serializes pagination, which uses the renderer/font cache
+  if (lastViewportWidth == 0 || lastViewportHeight == 0 || bookPageMap.isExact()) {
+    return;
+  }
   const int idx = bookPageMap.nextUnknown(0);
   if (idx < 0) {
     return;
   }
   lastBackgroundIndexTime = now;
-  {
-    RenderLock lock;  // serialize with the render task: pagination uses the renderer/font cache
-    if (!indexAndRecordSection(idx, lastViewportWidth, lastViewportHeight)) {
-      // Mark as 0 pages so a broken/un-indexable section is not retried forever
-      // (and so isExact() can still converge). Cleared on any settings change.
-      bookPageMap.recordSection(idx, 0);
-    }
+  if (!indexAndRecordSection(idx, lastViewportWidth, lastViewportHeight)) {
+    // Mark as 0 pages so a broken/un-indexable section is not retried forever
+    // (and so isExact() can still converge). Cleared on any settings change.
+    bookPageMap.recordSection(idx, 0);
   }
-  // Persist sweep progress. Naturally throttled (>= one section per ~750ms idle);
-  // pagemap.bin is tiny, so SD wear is negligible.
+  // Persist sweep progress while still holding RenderLock. Naturally throttled
+  // (>= one section per ~750ms idle); pagemap.bin is tiny, so SD wear is negligible.
   bookPageMap.save(epub->getCachePath() + "/pagemap.bin");
   // No requestUpdate(): the refined total appears on the next page render.
 }
