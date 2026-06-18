@@ -5,6 +5,7 @@
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <JsonSettingsIO.h>
@@ -175,6 +176,10 @@ void EpubReaderActivity::onExit() {
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
+  if (bookPageMapInitialized && epub) {
+    bookPageMap.save(epub->getCachePath() + "/pagemap.bin");
+  }
+
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
   section.reset();
@@ -269,18 +274,24 @@ void EpubReaderActivity::loop() {
         bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
       }
       const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
-      startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
-                                 renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
-                                 SETTINGS.orientation, !currentPageFootnotes.empty()),
-                             [this](const ActivityResult& result) {
-                               // Always apply orientation change even if the menu was cancelled
-                               const auto& menu = std::get<MenuResult>(result.data);
-                               applyOrientation(menu.orientation);
-                               toggleAutoPageTurn(menu.pageTurnOption);
-                               if (!result.isCancelled) {
-                                 onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
-                               }
-                             });
+      const bool smartPages = SETTINGS.smartCalculateTotalPages && bookPageMapInitialized;
+      const int bookCurrentPage =
+          (smartPages && section) ? bookPageMap.globalPage(currentSpineIndex, section->currentPage) : 0;
+      const int bookTotalPages = smartPages ? bookPageMap.total() : 0;
+      const bool bookTotalIsEstimate = smartPages ? !bookPageMap.isExact() : false;
+      startActivityForResult(
+          std::make_unique<EpubReaderMenuActivity>(
+              renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent, bookCurrentPage,
+              bookTotalPages, bookTotalIsEstimate, SETTINGS.orientation, !currentPageFootnotes.empty()),
+          [this](const ActivityResult& result) {
+            // Always apply orientation change even if the menu was cancelled
+            const auto& menu = std::get<MenuResult>(result.data);
+            applyOrientation(menu.orientation);
+            toggleAutoPageTurn(menu.pageTurnOption);
+            if (!result.isCancelled) {
+              onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
+            }
+          });
     }
   }
 
@@ -340,6 +351,7 @@ void EpubReaderActivity::loop() {
 
   const auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
   if (!prevTriggered && !nextTriggered) {
+    backgroundIndexIdle();
     return;
   }
 
@@ -770,6 +782,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
   const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
 
+  lastViewportWidth = viewportWidth;
+  lastViewportHeight = viewportHeight;
+  ensurePageMap(viewportWidth, viewportHeight);
+
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
@@ -847,6 +863,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
   }
 
+  if (SETTINGS.smartCalculateTotalPages) {
+    bookPageMap.recordSection(currentSpineIndex, section->pageCount);
+  }
+
   renderer.clearScreen();
 
   if (section->pageCount == 0) {
@@ -904,6 +924,72 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   }
 }
 
+bool EpubReaderActivity::indexAndRecordSection(const int spineIndex, const uint16_t viewportWidth,
+                                               const uint16_t viewportHeight) {
+  if (!epub || spineIndex < 0 || spineIndex >= epub->getSpineItemsCount()) {
+    return false;
+  }
+  Section s(epub, spineIndex, renderer);
+  if (!s.loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                         SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                         SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
+                         SETTINGS.focusReadingEnabled)) {
+    if (!s.createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                             SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                             SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
+                             SETTINGS.focusReadingEnabled)) {
+      LOG_ERR("ERS", "Background index failed for section %d", spineIndex);
+      return false;
+    }
+  }
+  bookPageMap.recordSection(spineIndex, s.pageCount);
+  return true;
+}
+
+void EpubReaderActivity::backgroundIndexIdle() {
+  static constexpr unsigned long BACKGROUND_INDEX_IDLE_MS = 1500UL;     // reading-pause threshold
+  static constexpr unsigned long BACKGROUND_INDEX_INTERVAL_MS = 750UL;  // min gap between sections
+
+  if (!epub || !bookPageMapInitialized || automaticPageTurnActive || !SETTINGS.smartCalculateTotalPages) {
+    return;
+  }
+  const unsigned long now = millis();
+  const unsigned long idle = now - lastPageTurnTime;
+  // Only paginate while the CPU is still at full clock. The main loop drops to
+  // LOW_POWER_FREQ (10 MHz) after IDLE_POWER_SAVING_MS of inactivity; a section
+  // can take ~1-2s and would be ~16x slower there (multi-second stall / watchdog
+  // risk). Starting within this window guarantees full clock, and since loop()
+  // blocks the clock-drop while paginating, the section also completes at full clock.
+  if (idle < BACKGROUND_INDEX_IDLE_MS || idle >= HalPowerManager::IDLE_POWER_SAVING_MS) {
+    return;
+  }
+  if (now - lastBackgroundIndexTime < BACKGROUND_INDEX_INTERVAL_MS) {
+    return;
+  }
+  // bookPageMap and the viewport fields are shared with the render task, which
+  // mutates them under RenderLock (render() -> ensurePageMap()/recordSection();
+  // ensurePageMap() can reallocate the page vector). Hold the same lock for every
+  // shared-state access below to avoid a cross-task data race.
+  RenderLock lock;  // also serializes pagination, which uses the renderer/font cache
+  if (lastViewportWidth == 0 || lastViewportHeight == 0 || bookPageMap.isExact()) {
+    return;
+  }
+  const int idx = bookPageMap.nextUnknown(0);
+  if (idx < 0) {
+    return;
+  }
+  lastBackgroundIndexTime = now;
+  if (!indexAndRecordSection(idx, lastViewportWidth, lastViewportHeight)) {
+    // Mark as 0 pages so a broken/un-indexable section is not retried forever
+    // (and so isExact() can still converge). Cleared on any settings change.
+    bookPageMap.recordSection(idx, 0);
+  }
+  // Persist sweep progress while still holding RenderLock. Naturally throttled
+  // (>= one section per ~750ms idle); pagemap.bin is tiny, so SD wear is negligible.
+  bookPageMap.save(epub->getCachePath() + "/pagemap.bin");
+  // No requestUpdate(): the refined total appears on the next page render.
+}
+
 void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportWidth, const uint16_t viewportHeight) {
   if (!epub || !section || section->pageCount < 2) {
     return;
@@ -919,21 +1005,50 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
     return;
   }
 
-  Section nextSection(epub, nextSpineIndex, renderer);
-  if (nextSection.loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                  SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
-                                  viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
-                                  SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
+  LOG_DBG("ERS", "Silently indexing next chapter: %d", nextSpineIndex);
+  // Builds the next chapter's cache if needed and records its page count.
+  // Already inside render()'s RenderLock, so no lock is taken here.
+  indexAndRecordSection(nextSpineIndex, viewportWidth, viewportHeight);
+}
+
+PageMapFingerprint EpubReaderActivity::currentFingerprint(const uint16_t viewportWidth,
+                                                          const uint16_t viewportHeight) const {
+  PageMapFingerprint fp;
+  fp.fontId = SETTINGS.getReaderFontId();
+  fp.lineCompression = SETTINGS.getReaderLineCompression();
+  fp.extraParagraphSpacing = SETTINGS.extraParagraphSpacing;
+  fp.paragraphAlignment = SETTINGS.paragraphAlignment;
+  fp.viewportWidth = viewportWidth;
+  fp.viewportHeight = viewportHeight;
+  fp.hyphenationEnabled = SETTINGS.hyphenationEnabled;
+  fp.embeddedStyle = SETTINGS.embeddedStyle;
+  fp.imageRendering = SETTINGS.imageRendering;
+  fp.focusReadingEnabled = SETTINGS.focusReadingEnabled;
+  return fp;
+}
+
+void EpubReaderActivity::ensurePageMap(const uint16_t viewportWidth, const uint16_t viewportHeight) {
+  if (!SETTINGS.smartCalculateTotalPages) {
+    return;  // opt-in feature: leave the map uninitialized so all book-page paths stay inert
+  }
+  const PageMapFingerprint fp = currentFingerprint(viewportWidth, viewportHeight);
+  if (bookPageMapInitialized && fp == bookPageMap.fingerprint()) {
     return;
   }
-
-  LOG_DBG("ERS", "Silently indexing next chapter: %d", nextSpineIndex);
-  if (!nextSection.createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                     SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
-                                     viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
-                                     SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
-    LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
+  // (Re)build: a fingerprint change means the section caches and the persisted
+  // pagemap are invalid (load() below will reject a stale file).
+  std::vector<uint32_t> bytes;
+  const int n = epub->getSpineItemsCount();
+  bytes.reserve(n);
+  size_t prev = 0;
+  for (int i = 0; i < n; ++i) {
+    const size_t cum = epub->getCumulativeSpineItemSize(i);
+    bytes.push_back(static_cast<uint32_t>(cum >= prev ? cum - prev : 0));
+    prev = cum;
   }
+  bookPageMap.init(std::move(bytes), fp);
+  bookPageMap.load(epub->getCachePath() + "/pagemap.bin");
+  bookPageMapInitialized = true;
 }
 
 bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageCount) {
@@ -1097,6 +1212,18 @@ void EpubReaderActivity::renderStatusBar() const {
   const float sectionChapterProg = (pageCount > 0) ? (static_cast<float>(currentPage) / pageCount) : 0;
   const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
 
+  // Book-global page position for the counter text (chapter values above still
+  // drive the progress bar). Only when Smart Calculate Total Pages is on; otherwise
+  // pass -1 so drawStatusBar falls back to chapter-local counts.
+  int bookCurrentPage = -1;
+  int bookTotalPages = -1;
+  bool bookTotalIsEstimate = false;
+  if (SETTINGS.smartCalculateTotalPages && bookPageMapInitialized) {
+    bookCurrentPage = bookPageMap.globalPage(currentSpineIndex, section->currentPage);
+    bookTotalPages = bookPageMap.total();
+    bookTotalIsEstimate = !bookPageMap.isExact();
+  }
+
   std::string title;
 
   int textYOffset = 0;
@@ -1124,7 +1251,8 @@ void EpubReaderActivity::renderStatusBar() const {
     title = epub->getTitle();
   }
 
-  GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset);
+  GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, bookCurrentPage,
+                    bookTotalPages, bookTotalIsEstimate);
 }
 
 void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool savePosition) {
