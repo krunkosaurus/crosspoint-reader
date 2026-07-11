@@ -90,13 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 25
+### Version 29
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
 
-Version 25 includes:
+Version 29 includes:
 
 - cache-busting fields for paragraph alignment, hyphenation, embedded CSS,
   image rendering mode, and Focus Reading
@@ -105,6 +105,12 @@ Version 25 includes:
 - paragraph and list-item LUTs used by KOReader sync page refinement
 - optional per-word Focus Reading split metadata
 - per-page footnote entries
+- serialized word style bits for underline, strikethrough, superscript, and
+  subscript
+- flat TextBlock word storage (v29): per-word arrays plus one shared
+  NUL-terminated text blob, replacing v28's length-prefixed word strings. The
+  on-disk order mirrors the in-RAM arena so the firmware reads a whole block
+  payload with a single allocation and a single SD read
 
 ImHex pattern:
 
@@ -113,7 +119,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 25
+#define EXPECTED_VERSION 29
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
@@ -174,14 +180,20 @@ struct BlockStyle {
 
 struct TextBlock {
     u16 wordCount;
-    String words[wordCount];
-    s16 wordXPos[wordCount];
-    WordStyle wordStyle[wordCount];
-
     u8 hasFocus;
-    if (hasFocus != 0) {
-        u8 wordFocusBoundary[wordCount] [[comment("UTF-8 byte boundary between bold prefix and suffix")]];
-        u16 wordFocusSuffixX[wordCount] [[comment("Suffix x offset from word start")]];
+    u16 textBytes [[comment("Total size of text[], including one NUL per word")]];
+
+    if (wordCount > 0) {
+        u16 textOff[wordCount] [[comment("Byte offset of word i's text within text[]")]];
+        s16 wordXPos[wordCount];
+        if (hasFocus != 0) {
+            u16 wordFocusSuffixX[wordCount] [[comment("Suffix x offset from word start")]];
+        }
+        WordStyle wordStyle[wordCount];
+        if (hasFocus != 0) {
+            u8 wordFocusBoundary[wordCount] [[comment("UTF-8 byte boundary between bold prefix and suffix")]];
+        }
+        char text[textBytes] [[comment("All words back to back, each NUL-terminated")]];
     }
 
     BlockStyle blockStyle;
@@ -306,3 +318,32 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## `pagemap.bin`
+
+### Version 2
+
+Per-book index of section (spine item) page counts, enabling whole-book
+"page X of Y". This is a derived cache: the section `.bin` files remain the source
+of truth for exact counts. Path: `.crosspoint/epub_<hash>/pagemap.bin`.
+
+Invalidated (ignored on load, rebuilt) when the version, the render-settings
+fingerprint, or the spine count differs from the current book/settings — the same
+fingerprint the section cache uses.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| version | u8 | format version (2) |
+| sectionCacheVersion | u8 | invalidates counts when the section pagination/cache format changes |
+| fontId | s32 | render fingerprint |
+| lineCompression | float | |
+| extraParagraphSpacing | u8 (bool) | |
+| paragraphAlignment | u8 | |
+| viewportWidth | u16 | |
+| viewportHeight | u16 | |
+| hyphenationEnabled | u8 (bool) | |
+| embeddedStyle | u8 (bool) | |
+| imageRendering | u8 | |
+| focusReadingEnabled | u8 (bool) | |
+| spineCount | u16 | number of sections |
+| sectionPages | s32[spineCount] | exact page count per section; -1 = not yet paginated |
